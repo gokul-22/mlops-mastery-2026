@@ -23,46 +23,33 @@ class ImageClassifier:
         
         # 3. Model Initialization
         # We load a pre-trained MobileNetV3 model from torchvision
-        self.model = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
+        weights = models.MobileNet_V3_Small_Weights.DEFAULT
+        self.model = models.mobilenet_v3_small(weights=weights)
         self.model.eval()  # Set to evaluation mode (turns off Dropout/BatchNorm)
         self.model.to(self.device)
         
         # 4. Image Preprocessing Pipeline
-        self.transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406], 
-                std=[0.229, 0.224, 0.225]
-            ),
-        ])
+        self.transform = weights.transforms()
         
         # 5. Label Mapping (ImageNet 1000 classes)
-        self.categories = [f"Class_{i}" for i in range(1000)]
+        self.categories = weights.meta["categories"]
 
-    async def predict(
-        self, 
-        image_bytes: bytes, 
-        top_k: int = 3
-    ) -> Tuple[List[ClassificationResult], float]:
+    def _run_inference(self, image_bytes: bytes, top_k: int) -> Tuple[List[ClassificationResult], float]:
         """
-        Runs the inference pipeline on raw image bytes.
+        Synchronous inference logic to be run in a thread pool.
         """
-        # Start timer for latency tracking
         start_time = time.perf_counter()
         
         # 1. Convert bytes to Image and preprocess
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         input_tensor = self.transform(image).unsqueeze(0).to(self.device)
         
-        # 2. Inference (No Gradient calculation needed for speed)
+        # 2. Inference
         with torch.no_grad():
             outputs = self.model(input_tensor)
-            # Convert raw scores (logits) to probabilities
             probabilities = torch.nn.functional.softmax(outputs[0], dim=0)
             
-        # 3. Post-processing: Extract top K results
+        # 3. Post-processing
         top_probs, top_indices = torch.topk(probabilities, top_k)
         
         results = [
@@ -73,9 +60,20 @@ class ImageClassifier:
             for prob, idx in zip(top_probs, top_indices)
         ]
         
-        # Calculate latency in milliseconds
         latency = (time.perf_counter() - start_time) * 1000
         return results, latency
+
+    async def predict(
+        self, 
+        image_bytes: bytes, 
+        top_k: int = 3
+    ) -> Tuple[List[ClassificationResult], float]:
+        """
+        Runs the inference pipeline. Uses FastAPI's ability to run sync code in a threadpool
+        via run_in_threadpool to avoid blocking the main event loop.
+        """
+        from fastapi.concurrency import run_in_threadpool
+        return await run_in_threadpool(self._run_inference, image_bytes, top_k)
 
 # Global instance for re-use (Singleton Pattern)
 classifier = ImageClassifier()
