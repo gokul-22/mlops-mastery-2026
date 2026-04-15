@@ -7,6 +7,7 @@ import time
 from typing import List, Tuple
 from app.api.v1.schemas import ClassificationResult
 from app.core.config import settings
+from loguru import logger
 
 class ImageClassifier:
     """
@@ -20,19 +21,25 @@ class ImageClassifier:
         
         # 2. Hardware Selection (CPU vs GPU)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info(f"Initializing ImageClassifier on device: {self.device}")
         
         # 3. Model Initialization
-        # We load a pre-trained MobileNetV3 model from torchvision
-        weights = models.MobileNet_V3_Small_Weights.DEFAULT
-        self.model = models.mobilenet_v3_small(weights=weights)
-        self.model.eval()  # Set to evaluation mode (turns off Dropout/BatchNorm)
-        self.model.to(self.device)
-        
-        # 4. Image Preprocessing Pipeline
-        self.transform = weights.transforms()
-        
-        # 5. Label Mapping (ImageNet 1000 classes)
-        self.categories = weights.meta["categories"]
+        try:
+            # We load a pre-trained MobileNetV3 model from torchvision
+            weights = models.MobileNet_V3_Small_Weights.DEFAULT
+            self.model = models.mobilenet_v3_small(weights=weights)
+            self.model.eval()  # Set to evaluation mode (turns off Dropout/BatchNorm)
+            self.model.to(self.device)
+            
+            # 4. Image Preprocessing Pipeline
+            self.transform = weights.transforms()
+            
+            # 5. Label Mapping (ImageNet 1000 classes)
+            self.categories = weights.meta["categories"]
+            logger.info(f"Model {self.model_name} loaded successfully.")
+        except Exception as e:
+            logger.error(f"Failed to load model: {str(e)}")
+            raise e
 
     def _run_inference(self, image_bytes: bytes, top_k: int) -> Tuple[List[ClassificationResult], float]:
         """
